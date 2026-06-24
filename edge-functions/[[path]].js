@@ -73,6 +73,10 @@ export async function onRequest({ request, params, env }) {
   // 拆分路由路径
   const url = new URL(request.url);
   const fullPath = params.path || '';
+    // 非 /api/ 全部放行静态页面，不走接口逻辑
+  if (!fullPath.startsWith('api/')) {
+    return;
+  }
   const pathArr = fullPath.split('/');
 
   // 1. 注册 POST /api/auth/register
