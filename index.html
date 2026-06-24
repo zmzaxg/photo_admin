@@ -2,19 +2,24 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Link JSON 管理后台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSON链接管理系统</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui}
-.container{max-width:1200px;margin:20px auto;padding:0 20px}
-.card{border:1px solid #eee;border-radius:8px;padding:20px;margin:15px 0}
-input,textarea,button{width:100%;padding:10px;margin:8px 0;border:1px solid #ddd;border-radius:4px}
-button{background:#0066ff;color:#fff;border:none;cursor:pointer}
-.btn-danger{background:#f44336}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui, -apple-system}
+.container{max-width:1200px;margin:24px auto;padding:0 16px}
+.card{border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:16px 0;background:#fff}
+input,textarea{width:100%;padding:11px 12px;margin:8px 0;border:1px solid #d1d5db;border-radius:6px;font-size:14px}
+button{width:100%;padding:11px;border:none;border-radius:6px;background:#1677ff;color:#fff;cursor:pointer;margin:8px 0;font-size:14px}
+.btn-danger{background:#f53f3f}
+.btn-sm{width:auto;padding:6px 12px;margin:0}
 .tab{display:none}
 .tab.active{display:block}
-.tip-warning{color:#f44336}
-pre{background:#f5f5f5;padding:10px;overflow:auto}
-.flex-row{display:flex;gap:8px;align-items:center}
+.tip-warning{color:#f53f3f}
+pre{background:#f7f8fa;padding:12px;overflow:auto;border-radius:6px;white-space:pre-wrap}
+.flex-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.flex-row input{flex:1;margin:0}
+h2,h3{margin-bottom:12px;color:#1f2937}
+p{margin:6px 0;color:#4b5563}
 </style>
 </head>
 <body>
@@ -22,42 +27,54 @@ pre{background:#f5f5f5;padding:10px;overflow:auto}
 
 <script>
 const API_BASE = '';
-let token = localStorage.getItem('token');
+let token = localStorage.getItem('token') || null;
 let userInfo = null;
 let userLinkMax = 0;
-let userLinkCount = 0;
+let userLinkList = [];
 
-// 渲染入口
+// 统一请求封装（修复接口无响应、捕获报错）
+async function request(url, method = 'GET', body = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const opt = { method, headers };
+  if (body) opt.body = JSON.stringify(body);
+  try {
+    const res = await fetch(`${API_BASE}${url}`, opt);
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    alert('网络请求失败，请检查EdgeOne部署：' + err.message);
+    return { code: -1, msg: err.message };
+  }
+}
+
+// 页面入口渲染
 async function render() {
   const app = document.getElementById('app');
   if (!token) {
-    app.innerHTML = renderLoginTab();
-    bindLoginEvents();
+    app.innerHTML = renderLoginPanel();
     return;
   }
-  const res = await fetch(`${API_BASE}/api/link/myList`, {
-    headers: {Authorization: `Bearer ${token}`}
-  });
-  const data = await res.json();
-  if (data.code === 401) {
+  // 验证登录状态并加载链接
+  const linkRes = await request('/api/link/myList');
+  if (linkRes.code === 401) {
     logout();
     return;
   }
-  userLinkMax = data.maxLinkCount;
-  userLinkCount = data.data.length;
-  await loadUserInfo();
-  app.innerHTML = renderMainLayout();
-  bindMainEvents();
-  // 未邮箱验证锁定面板
-  if (!userInfo.emailVerified) showEmailVerifyPanel();
-  // 未绑定2FA弹窗提示
-  if (!userInfo.hasTotp) alert('提示：您尚未绑定2FA二次验证，建议前往设置绑定');
-  loadLinkList();
-}
-
-// 加载当前登录用户信息
-async function loadUserInfo() {
+  userLinkMax = linkRes.maxLinkCount;
+  userLinkList = linkRes.data;
   userInfo = JSON.parse(localStorage.getItem('userInfo'));
+  app.innerHTML = renderMainLayout();
+  // 未邮箱验证锁定
+  if (!userInfo.emailVerified) {
+    showEmailVerifyTip();
+    return;
+  }
+  // 未绑定2FA提示
+  if (!userInfo.hasTotp) {
+    setTimeout(()=>alert('温馨提示：您未绑定2FA二次验证，建议前往设置页面绑定'), 500);
+  }
+  renderLinkListHtml();
 }
 
 // 退出登录
@@ -65,115 +82,107 @@ function logout() {
   localStorage.removeItem('token');
   localStorage.removeItem('userInfo');
   token = null;
+  userInfo = null;
   render();
 }
 
-// 登录注册页面
-function renderLoginTab() {
+// 登录注册面板
+function renderLoginPanel() {
   return `
   <div class="card">
-    <h2>登录</h2>
-    <div id="loginTab">
-      <input type="email" id="loginEmail" placeholder="邮箱">
-      <input type="password" id="loginPwd" placeholder="密码">
+    <h2>账号登录</h2>
+    <div id="loginBox">
+      <input type="email" id="loginEmail" placeholder="注册邮箱">
+      <input type="password" id="loginPwd" placeholder="登录密码">
       <input type="text" id="loginTotp" placeholder="2FA验证码（未绑定留空）">
-      <button onclick="doLogin()">登录</button>
-      <p>没有账号？<button onclick="switchReg()">前往注册</button></p>
+      <button onclick="handleLogin()">登录系统</button>
+      <p>暂无账号？<button class="btn-sm" onclick="switchToReg()">立即注册</button></p>
     </div>
-    <div id="regTab" style="display:none">
-      <input type="email" id="regEmail" placeholder="注册邮箱">
-      <input type="password" id="regPwd" placeholder="设置密码">
-      <button onclick="doRegister()">注册账号</button>
-      <p>已有账号？<button onclick="switchLogin()">返回登录</button></p>
+    <div id="regBox" style="display:none;margin-top:16px;border-top:1px solid #eee;padding-top:16px">
+      <h3>新用户注册</h3>
+      <input type="email" id="regEmail" placeholder="填写邮箱账号">
+      <input type="password" id="regPwd" placeholder="设置登录密码">
+      <button onclick="handleRegister()">提交注册</button>
+      <p>已有账号？<button class="btn-sm" onclick="switchToLogin()">返回登录</button></p>
     </div>
   </div>
   `;
 }
-function switchReg(){document.getElementById('loginTab').style.display='none';document.getElementById('regTab').style.display='block'}
-function switchLogin(){document.getElementById('loginTab').style.display='block';document.getElementById('regTab').style.display='none'}
-
-// 执行注册
-async function doRegister() {
-  const email = document.getElementById('regEmail').value;
-  const pwd = document.getElementById('regPwd').value;
-  const res = await fetch(`${API_BASE}/api/auth/register`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({email,pwd})
-  });
-  const d = await res.json();
-  alert(d.msg);
-  if(d.code===200) switchLogin();
+function switchToReg(){
+  document.getElementById('loginBox').style.display='none';
+  document.getElementById('regBox').style.display='block';
+}
+function switchToLogin(){
+  document.getElementById('loginBox').style.display='block';
+  document.getElementById('regBox').style.display='none';
 }
 
-// 执行登录
-async function doLogin() {
-  const email = document.getElementById('loginEmail').value;
-  const pwd = document.getElementById('loginPwd').value;
-  const totp = document.getElementById('loginTotp').value;
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({email,password:pwd,totpCode:totp})
-  });
-  const d = await res.json();
-  if(d.code!==200) return alert(d.msg);
-  localStorage.setItem('token', d.token);
-  localStorage.setItem('userInfo', JSON.stringify(d.user));
-  token = d.token;
-  userInfo = d.user;
+// 注册逻辑（修复点击无响应）
+async function handleRegister() {
+  const email = document.getElementById('regEmail').value.trim();
+  const pwd = document.getElementById('regPwd').value.trim();
+  if (!email || !pwd) return alert('邮箱和密码不能为空');
+  const res = await request('/api/auth/register', 'POST', { email, password: pwd });
+  alert(res.msg);
+  if (res.code === 200) switchToLogin();
+}
+
+// 登录逻辑
+async function handleLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pwd = document.getElementById('loginPwd').value.trim();
+  const totp = document.getElementById('loginTotp').value.trim();
+  if (!email || !pwd) return alert('邮箱密码必填');
+  const res = await request('/api/auth/login', 'POST', { email, password: pwd, totpCode: totp });
+  if (res.code !== 200) return alert(res.msg);
+  localStorage.setItem('token', res.token);
+  localStorage.setItem('userInfo', JSON.stringify(res.user));
+  token = res.token;
+  userInfo = res.user;
   render();
 }
 
 // 邮箱验证弹窗
-async function showEmailVerifyPanel() {
-  const wrap = document.getElementById('panelWrap');
-  wrap.innerHTML = `
+async function showEmailVerifyTip() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
   <div class="card tip-warning">
     <h3>邮箱未验证，所有功能已锁定</h3>
-    <button onclick="sendCode()">发送验证码到邮箱</button>
-    <input type="text" id="emailCode" placeholder="6位验证码">
-    <button onclick="verifyEmail()">完成验证</button>
+    <p>请完成邮箱验证后使用管理功能</p>
+    <button onclick="sendVerifyCode()">发送验证码至邮箱 ${userInfo.email}</button>
+    <input type="text" id="emailCodeInput" placeholder="6位数字验证码">
+    <button onclick="submitEmailVerify()">确认验证邮箱</button>
+    <button class="btn-danger" onclick="logout()">退出登录</button>
   </div>
   `;
 }
-async function sendCode() {
-  const res = await fetch(`${API_BASE}/api/auth/sendCode`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({email:userInfo.email})
-  });
-  const d = await res.json();
-  alert(d.msg);
+async function sendVerifyCode() {
+  const res = await request('/api/auth/sendCode', 'POST', { email: userInfo.email });
+  alert(res.msg);
 }
-async function verifyEmail() {
-  const code = document.getElementById('emailCode').value;
-  const res = await fetch(`${API_BASE}/api/auth/verifyEmail`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({email:userInfo.email,code})
-  });
-  const d = await res.json();
-  alert(d.msg);
+async function submitEmailVerify() {
+  const code = document.getElementById('emailCodeInput').value.trim();
+  if (!code) return alert('请输入验证码');
+  const res = await request('/api/auth/verifyEmail', 'POST', { email: userInfo.email, code });
+  alert(res.msg);
   render();
 }
 
-// 主界面布局
+// 主页面布局
 function renderMainLayout() {
-  let superUserHtml = '';
-  if(userInfo.isSuper) {
-    superUserHtml = `<button onclick="openUserManage()">用户管理（超级管理员）</button>`;
+  let adminBtn = '';
+  if (userInfo.isSuper) {
+    adminBtn = `<button onclick="openUserManagePanel()">用户管理（超管）</button>`;
   }
   return `
   <div>
-    <div style="display:flex;gap:10px;margin:10px 0">
+    <div class="flex-row" style="margin-bottom:16px">
       <button onclick="switchTab('link')">链接管理</button>
-      <button onclick="switchTab('totp')">2FA设置</button>
-      ${superUserHtml}
+      <button onclick="switchTab('totp')">2FA安全设置</button>
+      ${adminBtn}
       <button class="btn-danger" onclick="logout()">退出登录</button>
     </div>
-    <div id="panelWrap"></div>
-    <div id="tabLink" class="tab active">${renderLinkPanel()}</div>
+    <div id="tabLink" class="tab active">${renderLinkEditPanel()}</div>
     <div id="tabTotp" class="tab">${renderTotpPanel()}</div>
     <div id="tabUser" class="tab"></div>
   </div>
@@ -181,119 +190,135 @@ function renderMainLayout() {
 }
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
-  document.getElementById(`tab${name.charAt(0).toUpperCase()+name.slice(1)}`).classList.add('active');
+  document.getElementById(`tab${name.charAt(0).toUpperCase() + name.slice(1)}`).classList.add('active');
 }
 
-// 链接管理面板（新增配额提示）
-function renderLinkPanel() {
-  let quotaTip = '';
-  if (!userInfo.isSuper) {
-    const remain = userLinkMax - userLinkCount;
-    quotaTip = `<p class="tip-warning">当前配额：${userLinkMax}条，已创建${userLinkCount}条，剩余可创建${remain}条</p>`;
+// 链接编辑面板
+function renderLinkEditPanel() {
+  let quotaText = '';
+  if (userInfo.isSuper) {
+    quotaText = '<p>您是超级管理员，链接无创建数量限制</p>';
   } else {
-    quotaTip = `<p>您是超级管理员，链接创建无数量上限</p>`;
+    const remain = userLinkMax - userLinkList.length;
+    quotaText = `<p class="tip-warning">链接配额：${userLinkMax}条，已创建${userLinkList.length}条，剩余可创建${remain}条</p>`;
   }
   return `
   <div class="card">
-    <h3>新建/编辑JSON访问链接</h3>
-    ${quotaTip}
-    <input id="linkPath" placeholder="访问路径，如demo">
-    <input id="linkPwd" placeholder="访问密码">
-    <textarea id="linkJson" rows="8" placeholder="JSON内容"></textarea>
-    <button onclick="saveLink()">保存链接</button>
+    <h3>新建JSON访问链接</h3>
+    ${quotaText}
+    <input id="linkPathInput" placeholder="访问路径（英文小写，如demo）">
+    <input id="linkPwdInput" placeholder="访问密码（外部访问需携带）">
+    <textarea id="linkJsonInput" rows="7" placeholder="标准JSON内容，例：{"name":"test"}"></textarea>
+    <button onclick="saveNewLink()">保存链接</button>
   </div>
   <div class="card">
-    <h3>我的链接列表</h3>
-    <div id="linkList"></div>
+    <h3>我的全部链接</h3>
+    <div id="linkListBox"></div>
   </div>
   `;
+}
+
+// 渲染链接列表
+function renderLinkListHtml() {
+  const box = document.getElementById('linkListBox');
+  if (!box) return;
+  if (userLinkList.length === 0) {
+    box.innerHTML = '<p>暂无创建的链接</p>';
+    return;
+  }
+  let html = '';
+  userLinkList.forEach(item=>{
+    const jsonStr = JSON.stringify(JSON.parse(item.jsonData), null, 2);
+    html += `
+    <div style="border:1px solid #eee;padding:12px;border-radius:8px;margin:10px 0">
+      <p>公开访问地址：<code>/api/out/${item.pathName}?pwd=你的访问密码</code></p>
+      <pre>${jsonStr}</pre>
+      <div class="flex-row">
+        <button class="btn-sm btn-danger" onclick="delLink('${item.pathName}')">删除该链接</button>
+      </div>
+    </div>
+    `;
+  });
+  box.innerHTML = html;
+}
+
+// 保存链接
+async function saveNewLink() {
+  const path = document.getElementById('linkPathInput').value.trim();
+  const pwd = document.getElementById('linkPwdInput').value.trim();
+  const jsonTxt = document.getElementById('linkJsonInput').value.trim();
+  if (!path || !pwd || !jsonTxt) return alert('路径、访问密码、JSON内容全部必填');
+  try {
+    JSON.parse(jsonTxt);
+  } catch (e) {
+    return alert('JSON格式错误，请修正后重试');
+  }
+  const res = await request('/api/link/save', 'POST', {
+    linkId: null,
+    pathName: path,
+    accessPwd: pwd,
+    jsonData: jsonTxt
+  });
+  alert(res.msg);
+  render();
+}
+
+// 删除链接
+async function delLink(pathName) {
+  if (!confirm(`确认删除链接 /api/out/${pathName}？删除后无法恢复`)) return;
+  const res = await request('/api/link/del', 'POST', { pathName });
+  alert(res.msg);
+  render();
 }
 
 // 2FA设置面板
 function renderTotpPanel() {
+  const bindStatus = userInfo.hasTotp ? '已绑定' : '未绑定';
   return `
   <div class="card">
-    <h3>二次验证2FA设置</h3>
-    <p>${userInfo.hasTotp ? '已绑定2FA' : '未绑定2FA'}</p>
-    <button onclick="initTotp()">开始绑定2FA</button>
-    <div id="totpQr"></div>
-    <input id="totpVerifyCode" placeholder="输入验证器6位数字">
-    <button onclick="bindTotp()">确认绑定</button>
+    <h3>二次验证 TOTP 2FA 设置</h3>
+    <p>当前状态：${bindStatus}</p>
+    <button onclick="initTotpSecret()">获取绑定密钥</button>
+    <div id="totpQrBox" style="margin:10px 0"></div>
+    <input type="text" id="totpCodeInput" placeholder="输入验证器6位数字">
+    <button onclick="confirmBindTotp()">确认绑定2FA</button>
   </div>
   `;
 }
-
-// 加载2FA密钥二维码
-async function initTotp() {
-  const res = await fetch(`${API_BASE}/api/auth/getTotpInit`, {
-    headers:{Authorization:`Bearer ${token}`}
-  });
-  const d = await res.json();
-  document.getElementById('totpQr').innerHTML = `<p>密钥：${d.secret}</p><p>链接：${d.otpUrl}</p>`;
+async function initTotpSecret() {
+  const res = await request('/api/auth/getTotpInit');
+  if (res.code !== 200) return alert(res.msg);
+  document.getElementById('totpQrBox').innerHTML = `
+  <p>密钥：${res.secret}</p>
+  <p>导入链接：${res.otpUrl}</p>
+  <p>复制密钥到谷歌验证器/微软验证器添加账号</p>
+  `;
 }
-async function bindTotp() {
-  const code = document.getElementById('totpVerifyCode').value;
-  const res = await fetch(`${API_BASE}/api/auth/bindTotp`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({verifyCode:code})
-  });
-  const d = await res.json();
-  alert(d.msg);
+async function confirmBindTotp() {
+  const code = document.getElementById('totpCodeInput').value.trim();
+  if (!code) return alert('请输入6位验证码');
+  const res = await request('/api/auth/bindTotp', 'POST', { verifyCode: code });
+  alert(res.msg);
   render();
 }
 
-// 保存链接
-async function saveLink() {
-  const pathName = document.getElementById('linkPath').value;
-  const accessPwd = document.getElementById('linkPwd').value;
-  const jsonData = document.getElementById('linkJson').value;
-  try{JSON.parse(jsonData)}catch{return alert('JSON格式错误')}
-  const res = await fetch(`${API_BASE}/api/link/save`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({pathName,accessPwd,jsonData})
-  });
-  const d = await res.json();
-  if(d.code!==200) return alert(d.msg);
-  alert(d.msg);
-  render();
-}
-
-// 加载链接列表
-async function loadLinkList() {
-  const res = await fetch(`${API_BASE}/api/link/myList`, {headers:{Authorization:`Bearer ${token}`}});
-  const d = await res.json();
-  const wrap = document.getElementById('linkList');
-  let html = '';
-  d.data.forEach(item=>{
-    html += `
-    <div style="border:1px solid #ddd;padding:10px;margin:5px 0">
-      <p>访问地址：/api/out/${item.pathName}?pwd=你的密码</p>
-      <pre>${JSON.stringify(JSON.parse(item.jsonData),null,2)}</pre>
-    </div>
-    `;
-  });
-  wrap.innerHTML = html || '<p>暂无链接</p>';
-}
-
-// 超管：加载全部用户 + 修改配额功能
-async function openUserManage() {
-  const res = await fetch(`${API_BASE}/api/admin/allUsers`, {headers:{Authorization:`Bearer ${token}`}});
-  const d = await res.json();
-  let html = '<h3>全部用户管理（可修改链接最大配额）</h3>';
-  d.data.forEach(u=>{
+// 超管用户管理面板
+async function openUserManagePanel() {
+  const res = await request('/api/admin/allUsers');
+  if (res.code !== 200) return alert(res.msg);
+  let html = '<h3>全部用户管理（可修改链接配额）</h3>';
+  res.data.forEach(u=>{
     html += `
     <div class="card">
-      <p>邮箱：${u.email}</p>
+      <p>邮箱账号：${u.email}</p>
       <p>UID：${u.uid}</p>
       <p>超级管理员：${u.isSuper?'是':'否'}</p>
       <p>邮箱验证：${u.emailVerified?'已验证':'未验证'}</p>
       <p>2FA绑定：${u.hasTotp?'已绑定':'未绑定'}</p>
       <div class="flex-row">
         <span>链接最大配额：</span>
-        <input type="number" id="input_${u.email}" value="${u.maxLinkCount}" style="width:120px">
-        <button onclick="setUserQuota('${u.email}')">保存修改</button>
+        <input type="number" id="quota_${u.email}" value="${u.maxLinkCount}" style="width:140px">
+        <button class="btn-sm" onclick="saveUserQuota('${u.email}')">保存修改</button>
       </div>
     </div>
     `;
@@ -301,20 +326,13 @@ async function openUserManage() {
   document.getElementById('tabUser').innerHTML = html;
   switchTab('user');
 }
-
-// 管理员修改用户配额
-async function setUserQuota(email) {
-  const input = document.getElementById(`input_${email}`);
+async function saveUserQuota(email) {
+  const input = document.getElementById(`quota_${email}`);
   const num = parseInt(input.value);
-  if(isNaN(num) || num < 0) return alert('请输入合法数字');
-  const res = await fetch(`${API_BASE}/api/admin/setUserMaxLink`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({targetEmail:email,newMax:num})
-  });
-  const d = await res.json();
-  alert(d.msg);
-  openUserManage();
+  if (isNaN(num) || num < 0) return alert('配额必须为0以上数字');
+  const res = await request('/api/admin/setUserMaxLink', 'POST', { targetEmail: email, newMax: num });
+  alert(res.msg);
+  openUserManagePanel();
 }
 
 // 页面初始化
